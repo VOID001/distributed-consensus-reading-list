@@ -10,21 +10,39 @@ Answer these questions after reading the code
 5. The log is then synced if `sync` option is enabled, and then the batch is also written to `memtable` by calling `WriteBatchInternal::InsertInto`
 6. Handle errors if `sync_error`. Update the `last_sequence` number (**XXX(void001):** which seems to be the LSN?)
 7. Iterate through the waiting queue, mark the previous items as __finished__ and notify the waiter
-<span style="color:red">My Question: Why there can be other "writers" before the current writer? We already ensure the current Writer is in fron in (2).</span>
-<span style="color:green">Answer: No writers can be in front of the current writer, that is true. What the code actually does will be easier to understand with a graph</span>
 
-<span style="color:green"> Suppose we have the following writers_ queue</span>
-```TEX
-[W0] <- [W1] <- [W2] <- [W3] <- [W4] <- [W5]
-
-```
-<span style="color:green"> The current thread is processing [W0]. And when processing [W0], it found that the following 3 Writers can also be merged into this batch group (by calling `BuildBatchGroup`)</span>
-<span style="color:green"> So now the last_writer is [W3], and all of W0-W4 is written to the log and memtable, so we definitely want to avoid writing them again. Therefore, when we are finishing the current thread's work, we iterate through the `writers_.front()` to `last_writer` and mark [W1], [W2], [W3], as finished and pop them out of the queue as well, note that we call `cv.Signal()` to wake up the corresponding writer thread for [W1], [W2], [W3] and notify them they can exit.
 
 **Note that step 4 - 5 do not need to stay in the Global `mutex_` of `DBImpl`, since the IO is already guaranteed to be serialized by the current `DBImpl::Writer` and the wait queue**
 
-- [ ] What is `DBImpl::BuildBatchGroup`'s job?
+__The step 7 is the final step of the Write call, Let me highlight one of the elegant design of the DBImpl::Write. It uses a writer queue and every thread waiting on this queue can help other writers write the data as well. See the following paragraph for an example__
+Suppose we have the following writers_ queue
+```TEX
+(head)
+[W0] <- [W1] <- [W2] <- [W3] <- [W4] <- [W5]
+----------------------------
+(Covered by BuildBatchGroup)
+```
+The current thread is processing [W0]. And when processing [W0], it found that the following 3 Writers can also be merged into this batch group (by calling `BuildBatchGroup`)
+So now the last_writer is [W3], and all of W0-W4 is written to the log and memtable, so we definitely want to avoid writing them again. Therefore, when we are finishing the current thread's work, we iterate through the `writers_.front()` to `last_writer` and mark [W1], [W2], [W3], as finished and pop them out of the queue as well, note that we call `cv.Signal()` to wake up the corresponding writer thread for [W1], [W2], [W3] and notify them they can return.
+Why don't we notify [W0]? Because we are the writer for [W0], we don't need to notify anyone. After the notify and dequeue, the queue becomes this
+
+```TEX
+(head)
+[W4] <- [W5]
+```
+
+Finally, the current thread notify the waiter of [W4], which means it can now take its job.
+
+### Sub-Questions
+
+- [x] What is `DBImpl::BuildBatchGroup`'s job?
   + `BuildBatchGroup` will iterate through all the writers in the `writers_` deque, and merge the multiple `WriteBatch` into a big write batch. And return the aggregated batch as well as the last writer it touches to the caller
+
+- [x] What is the benefit of having a `writer_` queue and allow batch group processing?
+  + It reduces the number of IOs needed and thread context switching. Each thread can do more things (within the limit). And what's important, it doesn't violate the WriteBatch semantic.
+
+- [x] What is `WriteBatchInternal::InsertInto`'s job?
+ + It inserts the write batch into the `memtable`.
 
 ## How to read a key from the LevelDB instance?
 
@@ -40,6 +58,9 @@ Answer these questions after reading the code
 ## How to recover a LevelDB database after restart the process?
 
 ## What are the major components (classes) of LevelDB?
+
+* Storage-Related
+  * MemTable
 
 ## What is the format of major data structures?
 
