@@ -1,6 +1,9 @@
 Answer these questions after reading the code
 =============================================
 
+
+## What is the file structure of leveldb?
+
 ## How to write a key into a LevelDB instance?
 
 1. Put `DBImpl::Writer` into a wait queue `writers_`
@@ -45,6 +48,10 @@ Finally, the current thread notify the waiter of [W4], which means it can now ta
  + It inserts the write batch into the `memtable`.
 
 ## How to read a key from the LevelDB instance?
+
+
+
+## **Concurrency Control of LevelDB R/W operations (How does leveldb support concurrent read/write operations)**
 
 ## What's the thread model of LevelDB?
 
